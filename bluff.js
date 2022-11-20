@@ -11,12 +11,6 @@ const config = {
     schema: "bluff",
 };
 
-shapes.forEach(shape => {
-    symbols.forEach(symbol => {
-        console.log(`INSERT INTO bluff.card (symbol_id, shape_id) VALUES ((SELECT id FROM bluff.card_symbol WHERE name = "${symbol}"), (SELECT id FROM bluff.card_shape WHERE name = "${shape}"));`);
-    })
-})
-
 const handleError = (res, error, endpoint) => {
     console.error(error);
     res.send({ error, endpoint });
