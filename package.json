@@ -12,7 +12,8 @@
   "homepage": "https://github.com/iee-ihu-gr-course1941/ADISE22_bluff93#readme",
   "dependencies": {
     "@mysql/xdevapi": "^8.0.31",
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "lodash": "4.17.21"
   },
   "devDependencies": {
     "nodemon": "^2.0.20",

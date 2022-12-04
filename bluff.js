@@ -1,9 +1,11 @@
 'use strict';
 const express = require('express');
 const mysql = require('@mysql/xdevapi');
+const _ = require('lodash');
 const app = express();
 
 const PORT = 30000;
+const TOTAL_PLAYERS_IN_GAME = 2;
 
 const config = {
     user: 'root',
@@ -64,17 +66,16 @@ const createGameUserSequence = (session, gameId, userId, userOrder) => {
 };
 
 mysql.getSession(config).then(
-    session => {
+    s => {
         app.get('/rules', (_req, res) => {
             res.send({
                 rules:
                     'Καλως ηρθατε στην Μπλοφα. Οι κανονες ειναι: ' +
-                    '1. Το παιχνιδι παιζεται με 3 παικτες. ' +
-                    '2. Χρησιμοποιειται μονο μια τραπουλα σε καθε παιχνιδι. ' +
+                    `1. Το παιχνιδι παιζεται με ${TOTAL_PLAYERS_IN_GAME} παικτες. ` +
+                    '2. Χρησιμοποιειται μονο μια τραπουλα σε καθε παιχνιδι και ολοι οι παικτες μοιραζονται ιδιο αριθμο χαρτιων. ' +
                     '3. Σε καθε γυρο ο παικτης πρεπει να ανακοινωσει ποια χαρτια ' +
                     'θελει να πεταξει, ποσα χαρτια + ποιο ειδος χαρτιου, π.χ. 3 βαλεδες. ' +
-                    'Αυτα τα χαρτια δεν ειναι απαραιτητο να ταιριαζουν με τα χαρτια που οντως ' +
-                    'θα ριξει.',
+                    'Αυτα τα χαρτια δεν ειναι απαραιτητο να ταιριαζουν με τα χαρτια που οντως θα ριξει.',
             });
         });
 
@@ -87,18 +88,16 @@ mysql.getSession(config).then(
             }
 
             // insert new user to db
-            session
-                .sql(`INSERT INTO user (name) VALUES ("${name}");`)
+            s.sql(`INSERT INTO user (name) VALUES ("${name}");`)
                 .execute()
                 .then(
                     result => {
                         const userId = result.getAutoIncrementValue();
 
                         // check which games await for users (not full)
-                        session
-                            .sql(
-                                'SELECT game_id, COUNT(*) as count from game_user_sequence GROUP BY game_id HAVING count < 3;'
-                            )
+                        s.sql(
+                            `SELECT game_id, COUNT(*) as count from game_user_sequence GROUP BY game_id HAVING count < ${TOTAL_PLAYERS_IN_GAME};`
+                        )
                             .execute()
                             .then(result => {
                                 const availableGames = result.fetchAll();
@@ -135,21 +134,20 @@ mysql.getSession(config).then(
                 return;
             }
 
-            getUser(session, userId)
+            getUser(s, userId)
                 .then(userId => {
-                    session
-                        .sql(
-                            `INSERT INTO game (created_by_user_id, creation_date) VALUES (${userId}, "${new Date()
-                                .toISOString()
-                                .slice(0, 19)
-                                .replace('T', ' ')}");`
-                        )
+                    s.sql(
+                        `INSERT INTO game (created_by_user_id, creation_date) VALUES (${userId}, "${new Date()
+                            .toISOString()
+                            .slice(0, 19)
+                            .replace('T', ' ')}");`
+                    )
                         .execute()
                         .then(
                             result => {
                                 const gameId = result.getAutoIncrementValue();
 
-                                createGameUserSequence(session, gameId, userId, 1)
+                                createGameUserSequence(s, gameId, userId, 1)
                                     .then(() => {
                                         res.send({
                                             message:
@@ -187,19 +185,13 @@ mysql.getSession(config).then(
             const gameId = req.query.gameId;
 
             if (!userId || !gameId) {
-                handleError(
-                    res,
-                    'userId or gameId request param missing',
-                    'GET /join-game?userId=&gameId='
-                );
+                handleError(res, 'userId or gameId request param missing', 'GET /join-game?userId=&gameId=');
                 return;
             }
 
-            // todo: check if user already is in this game
-            getUser(session, userId)
+            getUser(s, userId)
                 .then(userId => {
-                    session
-                        .sql(`SELECT id from game WHERE id=${gameId};`)
+                    s.sql(`SELECT id from game WHERE id=${gameId};`)
                         .execute()
                         .then(result => {
                             const allGameIds = result.fetchAll();
@@ -213,10 +205,9 @@ mysql.getSession(config).then(
                                 return;
                             }
 
-                            session
-                                .sql(
-                                    `SELECT * from game_user_sequence WHERE game_id=${gameId} AND user_id=${userId};`
-                                )
+                            s.sql(
+                                `SELECT * from game_user_sequence WHERE game_id=${gameId} AND user_id=${userId};`
+                            )
                                 .execute()
                                 .then(result => {
                                     const userInGame = result.fetchOne();
@@ -230,10 +221,9 @@ mysql.getSession(config).then(
                                     }
 
                                     // check if game can accept more players or is already full
-                                    session
-                                        .sql(
-                                            `SELECT game_id, COUNT(*) as count from game_user_sequence WHERE game_id=${gameId} GROUP BY game_id HAVING count < 3;`
-                                        )
+                                    s.sql(
+                                        `SELECT game_id, COUNT(*) as count from game_user_sequence WHERE game_id=${gameId} GROUP BY game_id HAVING count < ${TOTAL_PLAYERS_IN_GAME};`
+                                    )
                                         .execute()
                                         .then(result => {
                                             const usersInGame = result.fetchAll();
@@ -247,33 +237,125 @@ mysql.getSession(config).then(
                                                 return;
                                             }
 
-                                            session
-                                                .sql(
-                                                    `SELECT user_order from game_user_sequence WHERE game_id=${gameId} ORDER BY user_order;`
-                                                )
+                                            s.sql(
+                                                `SELECT user_id, user_order from game_user_sequence WHERE game_id=${gameId} ORDER BY user_order;`
+                                            )
                                                 .execute()
                                                 .then(
                                                     result => {
                                                         const usersInGame = result.fetchAll();
                                                         const lastUserOrder =
                                                             usersInGame[usersInGame.length - 1];
-                                                        const userOrder = lastUserOrder[0] + 1;
+                                                        const userOrder = lastUserOrder[1] + 1;
 
-                                                        createGameUserSequence(
-                                                            session,
-                                                            gameId,
-                                                            userId,
-                                                            userOrder
-                                                        )
+                                                        createGameUserSequence(s, gameId, userId, userOrder)
                                                             .then(() => {
-                                                                res.send({
-                                                                    message:
-                                                                        `You have successfully joined the game with gameId=${gameId}. ` +
-                                                                        `Your sequence order is ${userOrder}.`,
-                                                                    userId,
-                                                                    gameId,
-                                                                    userOrder,
-                                                                });
+                                                                if (
+                                                                    usersInGame.length + 1 !==
+                                                                    TOTAL_PLAYERS_IN_GAME
+                                                                ) {
+                                                                    res.send({
+                                                                        message:
+                                                                            `You have successfully joined the game with gameId=${gameId}. ` +
+                                                                            `Your sequence order is ${userOrder}.`,
+                                                                        userId,
+                                                                        gameId,
+                                                                        userOrder,
+                                                                    });
+                                                                    return;
+                                                                }
+
+                                                                // check if game is full to give out the cards
+                                                                s.sql('SELECT id from card;')
+                                                                    .execute()
+                                                                    .then(result => {
+                                                                        const shuffledCards = _.shuffle(
+                                                                            result.fetchAll()
+                                                                        );
+
+                                                                        const userIds = usersInGame
+                                                                            .map(u => u[0])
+                                                                            .concat(userId);
+
+                                                                        const noCardsPerUser = Math.floor(
+                                                                            shuffledCards.length /
+                                                                                TOTAL_PLAYERS_IN_GAME
+                                                                        );
+
+                                                                        // structure like {1: [1,3,7,17,16], 2: [5,2,6,8,9]}
+                                                                        const cardsPerUser = userIds.reduce(
+                                                                            (acc, userId) => {
+                                                                                acc[userId] = _.take(
+                                                                                    shuffledCards,
+                                                                                    noCardsPerUser
+                                                                                );
+
+                                                                                shuffledCards.splice(
+                                                                                    0,
+                                                                                    noCardsPerUser - 1
+                                                                                );
+
+                                                                                return acc;
+                                                                            },
+                                                                            {}
+                                                                        );
+
+                                                                        Promise.all(
+                                                                            userIds.map(id => {
+                                                                                s.sql(
+                                                                                    `INSERT INTO game_hand (game_id, user_id, type) VALUES (${gameId}, ${id}, "current");`
+                                                                                )
+                                                                                    .execute()
+                                                                                    .then(
+                                                                                        result => {
+                                                                                            const gameHandId =
+                                                                                                result.getAutoIncrementValue();
+
+                                                                                            return s
+                                                                                                .sql(
+                                                                                                    `INSERT INTO game_hand_user_card (game_hand_id, user_id, card_id) VALUES ${cardsPerUser[
+                                                                                                        id
+                                                                                                    ]
+                                                                                                        .map(
+                                                                                                            card =>
+                                                                                                                `(${gameHandId}, ${id}, ${card[0]})`
+                                                                                                        )
+                                                                                                        .join(
+                                                                                                            ','
+                                                                                                        )};`
+                                                                                                )
+                                                                                                .execute();
+                                                                                        },
+                                                                                        error => {
+                                                                                            handleError(
+                                                                                                res,
+                                                                                                error,
+                                                                                                'GET /join-game?userId=&gameId='
+                                                                                            );
+                                                                                        }
+                                                                                    );
+                                                                            })
+                                                                        ).then(
+                                                                            () => {
+                                                                                res.send({
+                                                                                    message:
+                                                                                        `You have successfully joined the game with gameId=${gameId}. ` +
+                                                                                        `Your sequence order is ${userOrder}.`,
+                                                                                    userId,
+                                                                                    gameId,
+                                                                                    userOrder,
+                                                                                });
+                                                                                return;
+                                                                            },
+                                                                            error => {
+                                                                                handleError(
+                                                                                    res,
+                                                                                    error,
+                                                                                    'GET /join-game?userId=&gameId='
+                                                                                );
+                                                                            }
+                                                                        );
+                                                                    });
                                                             })
                                                             .catch(error => {
                                                                 handleError(
