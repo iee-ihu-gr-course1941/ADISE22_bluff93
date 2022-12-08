@@ -449,7 +449,36 @@ mysql.getSession(config).then(
         });
 
         app.get('/throw', (req, res) => {
+            const userId = req.query.userId;
+            const gameId = req.query.gameId;
+            const said = req.query.said;
+            const actual = req.query.actual;
+
+            if (!userId || !gameId || !said || !actual) {
+                handleError(
+                    res,
+                    'userId, gameId, said or actual request param missing',
+                    'GET /throw?userId=&gameId=&said=&actual='
+                );
+                return;
+            }
+
+            // find quantity and shape
+            const [quantity, shape] = [said.substring(0, said.length - 1), said.substring(said.length - 1)];
+            if (!_.isNumber(Number(quantity))) {
+                handleError(res, 'said quantity is not a number', 'GET /throw?userId=&gameId=&said=&actual=');
+                return;
+            }
+
+            // TODO: validate shape from card_shape
+
             // userId, gameId, poies kartes tha petaxei
+            // petaw 2J =>1 row eipa oti petaxa 2K => 2 rows
+            // insert in game_hand me game_id user_id type="thrown"
+            // insert many in game_hand_card me game_hand_id (apo prin) card_id type="actual"+"said"
+            // vriskoume poies kartes exoun meinei sta xeria tou kai
+            // insert in game_hand type="current"
+            // insert many in game_hand_user_card with game_hand_id (apo prin) me tis kartes pou exei sta xeria
         });
 
         app.get('/challenge');
