@@ -390,6 +390,44 @@ mysql.getSession(config).then(
                     throw error;
                 });
         });
+
+        app.get('/my-cards', (req, res) => {
+            const userId = req.query.userId;
+            const gameId = req.query.gameId;
+
+            if (!userId || !gameId) {
+                handleError(res, 'userId or gameId request param missing', 'GET /my-cards?userId=&gameId=');
+                return;
+            }
+
+            s.sql(
+                `SELECT card_shape.name as shape, card_symbol.name as symbol FROM card
+                    INNER JOIN card_symbol ON card.symbol_id=card_symbol.id
+                    INNER JOIN card_shape ON card.shape_id=card_shape.id
+                    WHERE card.id IN (
+                    SELECT card_id FROM game_hand_user_card
+                    WHERE game_hand_id IN (
+                    SELECT max(id)
+                    FROM game_hand
+                    WHERE game_id=${gameId} AND user_id=${userId} AND type="current"))
+                    ORDER BY shape;`
+            )
+                .execute()
+                .then(
+                    result => {
+                        const userCards = result.fetchAll();
+
+                        res.send({
+                            myCards: userCards,
+                            userId,
+                            gameId,
+                        });
+                    },
+                    error => {
+                        handleError(res, error, 'GET /my-cards?userId=&gameId=');
+                    }
+                );
+        });
     },
     error => {
         console.error(error);
