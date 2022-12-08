@@ -67,6 +67,8 @@ const createGameUserSequence = (session, gameId, userId, userOrder) => {
 
 mysql.getSession(config).then(
     s => {
+        app.set('json spaces', 2);
+
         app.get('/rules', (_req, res) => {
             res.send({
                 rules:
@@ -402,7 +404,7 @@ mysql.getSession(config).then(
             }
 
             s.sql(
-                `SELECT card_shape.name as shape, card_symbol.name as symbol FROM card
+                `SELECT card.id as id, card_shape.name as shape, card_symbol.name as symbol FROM card
                     INNER JOIN card_symbol ON card.symbol_id=card_symbol.id
                     INNER JOIN card_shape ON card.shape_id=card_shape.id
                     WHERE card.id IN (
@@ -416,19 +418,41 @@ mysql.getSession(config).then(
                 .execute()
                 .then(
                     result => {
-                        const userCards = result.fetchAll();
+                        const myCards = result
+                            .fetchAll()
+                            .map(([id, shape, symbol]) => ({ id, shape, symbol }));
 
-                        res.send({
-                            myCards: userCards,
-                            userId,
-                            gameId,
-                        });
+                        s.sql(
+                            `SELECT card.id as id, card_shape.name as shape, card_symbol.name as symbol FROM card
+                                INNER JOIN card_symbol ON card.symbol_id=card_symbol.id
+                                INNER JOIN card_shape ON card.shape_id=card_shape.id
+                                ORDER BY symbol;`
+                        )
+                            .execute()
+                            .then(result => {
+                                const allCards = result
+                                    .fetchAll()
+                                    .map(([id, shape, symbol]) => ({ id, shape, symbol }));
+
+                                res.send({
+                                    myCards,
+                                    userId,
+                                    gameId,
+                                    allCards,
+                                });
+                            });
                     },
                     error => {
                         handleError(res, error, 'GET /my-cards?userId=&gameId=');
                     }
                 );
         });
+
+        app.get('/throw', (req, res) => {
+            // userId, gameId, poies kartes tha petaxei
+        });
+
+        app.get('/challenge');
     },
     error => {
         console.error(error);
