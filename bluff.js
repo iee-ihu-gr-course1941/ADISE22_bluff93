@@ -753,6 +753,73 @@ mysql.getSession(config).then(
                 });
         });
 
+        app.get('/last-declaration', (req, res) => {
+            const gameId = req.query.gameId;
+
+            if (!gameId) {
+                handleError(res, 'gameId request param missing', 'GET /last-declaration?gameId=');
+                return;
+            }
+
+            s.sql(`SELECT max(id) FROM game_hand WHERE game_id=${gameId} AND type="thrown";`)
+                .execute()
+                .then(
+                    result => {
+                        const lastThrown = result.fetchOne();
+
+                        if (!lastThrown) {
+                            res.send({
+                                message: 'No player has played yet, no declaration found',
+                                gameId,
+                            });
+                            return;
+                        }
+
+                        const gameHandId = lastThrown[0];
+
+                        s.sql(
+                            `SELECT card_id FROM game_hand_card WHERE game_hand_id=${gameHandId} AND type="said";`
+                        )
+                            .execute()
+                            .then(
+                                result => {
+                                    const saidCards = result.fetchAll();
+                                    const quantity = saidCards.length;
+                                    const sampleCardId = saidCards[0][0];
+
+                                    s.sql(
+                                        `SELECT card_shape.name FROM card
+                                            INNER JOIN card_shape ON card.shape_id=card_shape.id
+                                            WHERE card.id=${sampleCardId};`
+                                    )
+                                        .execute()
+                                        .then(
+                                            result => {
+                                                const shape = result.fetchOne()[0];
+
+                                                res.send({
+                                                    lastDeclaration: {
+                                                        quantity,
+                                                        shape,
+                                                    },
+                                                });
+                                            },
+                                            error => {
+                                                handleError(res, error, 'GET /last-declaration?gameId=');
+                                            }
+                                        );
+                                },
+                                error => {
+                                    handleError(res, error, 'GET /last-declaration?gameId=');
+                                }
+                            );
+                    },
+                    error => {
+                        handleError(res, error, 'GET /last-declaration?gameId=');
+                    }
+                );
+        });
+
         app.get('/challenge');
     },
     error => {
