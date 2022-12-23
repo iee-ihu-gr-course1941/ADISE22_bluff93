@@ -51,21 +51,38 @@ const getUser = (session, userId) => {
         );
 };
 
-const findNextPlayerOrder = (session, gameId, lastPlayer) => {
-    if (!lastPlayer) {
-        return Promise.resolve(1);
-    }
-
+const findNextPlayerOrder = (session, gameId) => {
     return session
         .sql(
-            `SELECT user_order FROM game_user_sequence
-            WHERE game_id=${gameId} AND user_id=${lastPlayer[1]};`
+            `SELECT id, user_id FROM game_hand
+            WHERE type="thrown" OR type="challenged" AND game_id=${gameId}
+            ORDER BY id DESC
+            LIMIT 1;`
         )
         .execute()
-        .then(result => {
-            const lastPlayerOrder = result.fetchOne()[0];
-            return lastPlayerOrder === TOTAL_PLAYERS_IN_GAME ? 1 : lastPlayerOrder + 1;
-        });
+        .then(
+            result => {
+                const lastPlayer = result.fetchOne();
+
+                if (!lastPlayer.length) {
+                    return Promise.resolve(1);
+                }
+
+                return session
+                    .sql(
+                        `SELECT user_order FROM game_user_sequence
+                         WHERE game_id=${gameId} AND user_id=${lastPlayer[1]};`
+                    )
+                    .execute()
+                    .then(result => {
+                        const lastPlayerOrder = result.fetchOne()[0];
+                        return lastPlayerOrder === TOTAL_PLAYERS_IN_GAME ? 1 : lastPlayerOrder + 1;
+                    });
+            },
+            error => {
+                throw new Error(error);
+            }
+        );
 };
 
 const createGameUserSequence = (session, gameId, userId, userOrder) => {
@@ -103,6 +120,88 @@ const getUserCards = (session, gameId, userId) => {
         .then(result => {
             return result.fetchAll().map(([id, shape, symbol]) => ({ id, shape, symbol }));
         });
+};
+
+const getLastDeclaration = (session, gameId) => {
+    return session
+        .sql(`SELECT max(id) FROM game_hand WHERE game_id=${gameId} AND type="thrown";`)
+        .execute()
+        .then(
+            result => {
+                const lastThrown = result.fetchOne();
+
+                if (!lastThrown.length) {
+                    throw new Error('No player has played yet, no declaration found');
+                }
+
+                return session
+                    .sql(
+                        `SELECT card_id FROM game_hand_card WHERE game_hand_id=${lastThrown[0]} AND type="said";`
+                    )
+                    .execute()
+                    .then(
+                        result => {
+                            const saidCards = result.fetchAll();
+                            const quantity = saidCards.length;
+                            const sampleCardId = saidCards[0][0];
+
+                            return session
+                                .sql(
+                                    `SELECT card_shape.name FROM card
+                                    INNER JOIN card_shape ON card.shape_id=card_shape.id
+                                    WHERE card.id=${sampleCardId};`
+                                )
+                                .execute()
+                                .then(
+                                    result => {
+                                        return {
+                                            lastDeclaration: {
+                                                quantity,
+                                                shape: result.fetchOne()[0],
+                                            },
+                                        };
+                                    },
+                                    error => {
+                                        throw new Error(error);
+                                    }
+                                );
+                        },
+                        error => {
+                            throw new Error(error);
+                        }
+                    );
+            },
+            error => {
+                handleError(res, error, 'GET /last-declaration?gameId=');
+            }
+        );
+};
+
+const getNextPlayer = (session, gameId) => {
+    return findNextPlayerOrder(session, gameId).then(
+        nextPlayerOrder => {
+            return session
+                .sql(
+                    `SELECT g.user_id, user.name FROM game_user_sequence as g
+                    INNER JOIN user ON user.id=g.user_id
+                    WHERE g.game_id=${gameId} and g.user_order=${nextPlayerOrder};`
+                )
+                .execute()
+                .then(
+                    nextPlayer => {
+                        const [id, name] = nextPlayer.fetchOne() || [];
+                        console.log(id, name);
+                        return { id, name };
+                    },
+                    error => {
+                        throw new Error(error);
+                    }
+                );
+        },
+        error => {
+            throw new Error(error);
+        }
+    );
 };
 
 mysql.getSession(config).then(
@@ -541,151 +640,125 @@ mysql.getSession(config).then(
                         return;
                     }
 
-                    s.sql(
-                        `SELECT id, user_id FROM game_hand
-                            WHERE type="thrown" OR type="challenged" AND game_id=${gameId}
-                            ORDER BY id DESC
-                            LIMIT 1;`
-                    )
-                        .execute()
-                        .then(
-                            result => {
-                                findNextPlayerOrder(s, gameId, result.fetchOne()).then(
-                                    order => {
-                                        s.sql(
-                                            `SELECT * FROM game_user_sequence
-                                        WHERE game_id=${gameId} AND user_id=${userId} AND user_order=${order}
-                                        LIMIT 1;`
-                                        )
-                                            .execute()
-                                            .then(
-                                                result => {
-                                                    const nextPlayer = result.fetchOne();
+                    findNextPlayerOrder(s, gameId, result.fetchOne()).then(
+                        order => {
+                            s.sql(
+                                `SELECT * FROM game_user_sequence
+                                WHERE game_id=${gameId} AND user_id=${userId} AND user_order=${order}
+                                LIMIT 1;`
+                            )
+                                .execute()
+                                .then(
+                                    result => {
+                                        const nextPlayer = result.fetchOne();
 
-                                                    if (!nextPlayer) {
-                                                        handleError(
-                                                            res,
-                                                            'you are not the next player',
-                                                            'GET /throw?userId=&gameId=&quantity=&shape=&actual='
-                                                        );
-                                                        return;
-                                                    }
+                                        if (!nextPlayer) {
+                                            handleError(
+                                                res,
+                                                'you are not the next player',
+                                                'GET /throw?userId=&gameId=&quantity=&shape=&actual='
+                                            );
+                                            return;
+                                        }
 
-                                                    // it's this player's order
-                                                    // make sure provided card ids are in the player's hands
-                                                    getUserCards(s, gameId, userId).then(
-                                                        myCards => {
-                                                            if (
-                                                                cardsIds.every(id =>
-                                                                    myCards.find(c => c.id === id)
-                                                                )
-                                                            ) {
-                                                                handleError(
-                                                                    res,
-                                                                    'some of the provided cards ids do not belong to you',
-                                                                    'GET /throw?userId=&gameId=&quantity=&shape=&actual='
-                                                                );
-                                                                return;
-                                                            }
+                                        // it's this player's order
+                                        // make sure provided card ids are in the player's hands
+                                        getUserCards(s, gameId, userId).then(
+                                            myCards => {
+                                                if (cardsIds.every(id => myCards.find(c => c.id === id))) {
+                                                    handleError(
+                                                        res,
+                                                        'some of the provided cards ids do not belong to you',
+                                                        'GET /throw?userId=&gameId=&quantity=&shape=&actual='
+                                                    );
+                                                    return;
+                                                }
 
-                                                            s.sql(
-                                                                `INSERT INTO game_hand (game_id, user_id, type) VALUES (${gameId}, ${userId}, "thrown");`
-                                                            )
-                                                                .execute()
-                                                                .then(result => {
-                                                                    const gameHandId =
-                                                                        result.getAutoIncrementValue();
-                                                                    const requestedShapeId = cardShape[0];
+                                                s.sql(
+                                                    `INSERT INTO game_hand (game_id, user_id, type) VALUES (${gameId}, ${userId}, "thrown");`
+                                                )
+                                                    .execute()
+                                                    .then(result => {
+                                                        const gameHandId = result.getAutoIncrementValue();
+                                                        const requestedShapeId = cardShape[0];
 
-                                                                    // find random ids for provided shape and limit by quantity
+                                                        // find random ids for provided shape and limit by quantity
+                                                        s.sql(
+                                                            `SELECT id FROM card WHERE shape_id=${requestedShapeId} LIMIT ${quantity};`
+                                                        )
+                                                            .execute()
+                                                            .then(
+                                                                result => {
+                                                                    const quantityRange = _.range(
+                                                                        0,
+                                                                        quantity
+                                                                    );
+                                                                    const randomShapeCardIds = result
+                                                                        .fetchAll()
+                                                                        .map(x => x[0]);
+                                                                    const actualRows = quantityRange.map(
+                                                                        i =>
+                                                                            `(${gameHandId}, ${cardsIds[i]}, "actual")`
+                                                                    );
+                                                                    const saidRows = quantityRange.map(
+                                                                        i =>
+                                                                            `(${gameHandId}, ${randomShapeCardIds[i]}, "said")`
+                                                                    );
+
+                                                                    // insert many into game_hand_card
                                                                     s.sql(
-                                                                        `SELECT id FROM card WHERE shape_id=${requestedShapeId} LIMIT ${quantity};`
+                                                                        `INSERT INTO game_hand_card (game_hand_id, card_id, type) VALUES ${[
+                                                                            actualRows.join(','),
+                                                                            saidRows.join(','),
+                                                                        ].join(',')};`
                                                                     )
                                                                         .execute()
                                                                         .then(
-                                                                            result => {
-                                                                                const quantityRange = _.range(
-                                                                                    0,
-                                                                                    quantity
-                                                                                );
-                                                                                const randomShapeCardIds =
-                                                                                    result
-                                                                                        .fetchAll()
-                                                                                        .map(x => x[0]);
-                                                                                const actualRows =
-                                                                                    quantityRange.map(
-                                                                                        i =>
-                                                                                            `(${gameHandId}, ${cardsIds[i]}, "actual")`
-                                                                                    );
-                                                                                const saidRows =
-                                                                                    quantityRange.map(
-                                                                                        i =>
-                                                                                            `(${gameHandId}, ${randomShapeCardIds[i]}, "said")`
+                                                                            () => {
+                                                                                // find after throw which cards are left in player's hand
+                                                                                const updatedUserCards =
+                                                                                    myCards.filter(
+                                                                                        c =>
+                                                                                            !cardsIds.includes(
+                                                                                                c.id.toString()
+                                                                                            )
                                                                                     );
 
-                                                                                // insert many into game_hand_card
+                                                                                // insert new row for type=current
                                                                                 s.sql(
-                                                                                    `INSERT INTO game_hand_card (game_hand_id, card_id, type) VALUES ${[
-                                                                                        actualRows.join(','),
-                                                                                        saidRows.join(','),
-                                                                                    ].join(',')};`
+                                                                                    `INSERT INTO game_hand (game_id, user_id, type)
+                                                                                                VALUES (${gameId}, ${userId}, "current");`
                                                                                 )
                                                                                     .execute()
                                                                                     .then(
-                                                                                        () => {
-                                                                                            // find after throw which cards are left in player's hand
-                                                                                            const updatedUserCards =
-                                                                                                myCards.filter(
+                                                                                        result => {
+                                                                                            const currentGameHandId =
+                                                                                                result.getAutoIncrementValue();
+                                                                                            const cardRows =
+                                                                                                updatedUserCards.map(
                                                                                                     c =>
-                                                                                                        !cardsIds.includes(
-                                                                                                            c.id.toString()
-                                                                                                        )
+                                                                                                        `(${currentGameHandId}, ${userId}, ${c.id})`
                                                                                                 );
 
-                                                                                            // insert new row for type=current
+                                                                                            // insert remaining user cards for game_hand_id
                                                                                             s.sql(
-                                                                                                `INSERT INTO game_hand (game_id, user_id, type)
-                                                                                                VALUES (${gameId}, ${userId}, "current");`
+                                                                                                `INSERT INTO game_hand_user_card (game_hand_id, user_id, card_id) VALUES ${cardRows.join(
+                                                                                                    ','
+                                                                                                )};`
                                                                                             )
                                                                                                 .execute()
                                                                                                 .then(
-                                                                                                    result => {
-                                                                                                        const currentGameHandId =
-                                                                                                            result.getAutoIncrementValue();
-                                                                                                        const cardRows =
-                                                                                                            updatedUserCards.map(
-                                                                                                                c =>
-                                                                                                                    `(${currentGameHandId}, ${userId}, ${c.id})`
-                                                                                                            );
-
-                                                                                                        // insert remaining user cards for game_hand_id
-                                                                                                        s.sql(
-                                                                                                            `INSERT INTO game_hand_user_card (game_hand_id, user_id, card_id) VALUES ${cardRows.join(
-                                                                                                                ','
-                                                                                                            )};`
-                                                                                                        )
-                                                                                                            .execute()
-                                                                                                            .then(
-                                                                                                                () => {
-                                                                                                                    res.send(
-                                                                                                                        {
-                                                                                                                            message:
-                                                                                                                                'Your turn was successfull',
-                                                                                                                            myCards:
-                                                                                                                                updatedUserCards,
-                                                                                                                            gameId,
-                                                                                                                            userId,
-                                                                                                                        }
-                                                                                                                    );
-                                                                                                                },
-                                                                                                                error => {
-                                                                                                                    handleError(
-                                                                                                                        res,
-                                                                                                                        error,
-                                                                                                                        'GET /throw?userId=&gameId=&quantity=&shape=&actual='
-                                                                                                                    );
-                                                                                                                }
-                                                                                                            );
+                                                                                                    () => {
+                                                                                                        res.send(
+                                                                                                            {
+                                                                                                                message:
+                                                                                                                    'Your turn was successfull',
+                                                                                                                myCards:
+                                                                                                                    updatedUserCards,
+                                                                                                                gameId,
+                                                                                                                userId,
+                                                                                                            }
+                                                                                                        );
                                                                                                     },
                                                                                                     error => {
                                                                                                         handleError(
@@ -713,25 +786,25 @@ mysql.getSession(config).then(
                                                                                 );
                                                                             }
                                                                         );
-                                                                });
-                                                        },
-                                                        error => {
-                                                            handleError(
-                                                                res,
-                                                                error,
-                                                                'GET /throw?userId=&gameId=&quantity=&shape=&actual='
+                                                                },
+                                                                error => {
+                                                                    handleError(
+                                                                        res,
+                                                                        error,
+                                                                        'GET /throw?userId=&gameId=&quantity=&shape=&actual='
+                                                                    );
+                                                                }
                                                             );
-                                                        }
-                                                    );
-                                                },
-                                                error => {
-                                                    handleError(
-                                                        res,
-                                                        error,
-                                                        'GET /throw?userId=&gameId=&quantity=&shape=&actual='
-                                                    );
-                                                }
-                                            );
+                                                    });
+                                            },
+                                            error => {
+                                                handleError(
+                                                    res,
+                                                    error,
+                                                    'GET /throw?userId=&gameId=&quantity=&shape=&actual='
+                                                );
+                                            }
+                                        );
                                     },
                                     error => {
                                         handleError(
@@ -741,15 +814,11 @@ mysql.getSession(config).then(
                                         );
                                     }
                                 );
-                            },
-                            error => {
-                                handleError(
-                                    res,
-                                    error,
-                                    'GET /throw?userId=&gameId=&quantity=&shape=&actual='
-                                );
-                            }
-                        );
+                        },
+                        error => {
+                            handleError(res, error, 'GET /throw?userId=&gameId=&quantity=&shape=&actual=');
+                        }
+                    );
                 });
         });
 
@@ -761,66 +830,95 @@ mysql.getSession(config).then(
                 return;
             }
 
-            s.sql(`SELECT max(id) FROM game_hand WHERE game_id=${gameId} AND type="thrown";`)
-                .execute()
-                .then(
-                    result => {
-                        const lastThrown = result.fetchOne();
-
-                        if (!lastThrown) {
-                            res.send({
-                                message: 'No player has played yet, no declaration found',
-                                gameId,
-                            });
-                            return;
-                        }
-
-                        const gameHandId = lastThrown[0];
-
-                        s.sql(
-                            `SELECT card_id FROM game_hand_card WHERE game_hand_id=${gameHandId} AND type="said";`
-                        )
-                            .execute()
-                            .then(
-                                result => {
-                                    const saidCards = result.fetchAll();
-                                    const quantity = saidCards.length;
-                                    const sampleCardId = saidCards[0][0];
-
-                                    s.sql(
-                                        `SELECT card_shape.name FROM card
-                                            INNER JOIN card_shape ON card.shape_id=card_shape.id
-                                            WHERE card.id=${sampleCardId};`
-                                    )
-                                        .execute()
-                                        .then(
-                                            result => {
-                                                const shape = result.fetchOne()[0];
-
-                                                res.send({
-                                                    lastDeclaration: {
-                                                        quantity,
-                                                        shape,
-                                                    },
-                                                });
-                                            },
-                                            error => {
-                                                handleError(res, error, 'GET /last-declaration?gameId=');
-                                            }
-                                        );
-                                },
-                                error => {
-                                    handleError(res, error, 'GET /last-declaration?gameId=');
-                                }
-                            );
-                    },
-                    error => {
-                        handleError(res, error, 'GET /last-declaration?gameId=');
-                    }
-                );
+            getLastDeclaration(s, gameId).then(
+                result => {
+                    res.send(result);
+                },
+                error => {
+                    handleError(res, error, 'GET /last-declaration?gameId=');
+                }
+            );
         });
 
         app.get('/challenge');
+
+        app.get('/status', (req, res) => {
+            const gameId = req.query.gameId;
+
+            if (!gameId) {
+                handleError(res, 'gameId request param missing', 'GET /status?gameId=');
+                return;
+            }
+
+            s.sql(
+                `SELECT game.created_by_user_id, u1.name, game.creation_date, game.won_by_user_id, u2.name FROM game
+                INNER JOIN user as u1 ON game.created_by_user_id=u1.id
+                LEFT JOIN user as u2 ON game.won_by_user_id=u2.id
+                WHERE game.id=${gameId};`
+            )
+                .execute()
+                .then(result => {
+                    const game = result.fetchOne();
+
+                    if (!game.length) {
+                        handleError(res, `No game with id=${gameId} found`);
+                        return;
+                    }
+
+                    s.sql(
+                        `SELECT g.user_id, user.name, g.user_order FROM game_user_sequence as g
+                        INNER JOIN user ON g.user_id=user.id
+                        WHERE g.game_id=${gameId}
+                        ORDER BY g.user_order;`
+                    )
+                        .execute()
+                        .then(
+                            result => {
+                                const players = result.fetchAll();
+
+                                getLastDeclaration(s, gameId).then(lastDeclaration => {
+                                    getNextPlayer(s, gameId).then(
+                                        nextPlayer => {
+                                            const [
+                                                createdByUserId,
+                                                createdByUsername,
+                                                creationDate,
+                                                winnerId,
+                                                winnerName,
+                                            ] = game;
+
+                                            res.send({
+                                                gameId,
+                                                game: {
+                                                    winner: winnerName
+                                                        ? `${winnerName} (id: ${winnerId})`
+                                                        : '-',
+                                                    ongoing: !_.isNumber(winnerId),
+                                                    creationDate,
+                                                    createdBy: `${createdByUsername} (id: ${createdByUserId})`,
+                                                    players: players.map(([id, name, order]) => ({
+                                                        id,
+                                                        name,
+                                                        order,
+                                                    })),
+                                                    // spread operator
+                                                    ...lastDeclaration,
+                                                    nextPlayer,
+                                                },
+                                            });
+                                        },
+                                        error => {
+                                            handleError(res, error, 'GET /last-declaration?gameId=');
+                                        }
+                                    );
+                                });
+                            },
+                            error => {
+                                handleError(res, error, 'GET /last-declaration?gameId=');
+                            }
+                        );
+                });
+        });
     },
     error => {
         console.error(error);
