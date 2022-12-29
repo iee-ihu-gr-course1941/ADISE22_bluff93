@@ -276,7 +276,7 @@ const getPreviousPlayerId = (session, gameId, userId) => {
         );
 };
 
-const handleChallenge = (session, gameId, userId) => {
+const handleChallenge = (session, gameId, userId, bluffCards) => {
     return getUserCards(session, gameId, userId).then(
         userCards => {
             session
@@ -291,7 +291,7 @@ const handleChallenge = (session, gameId, userId) => {
 
                         const userCardIds = userCards
                             .map(({ id }) => id)
-                            .concat(actualCards.map(([_, id]) => id));
+                            .concat(bluffCards.map(([_, id]) => id));
 
                         // insert new cards for user
                         session
@@ -979,10 +979,9 @@ mysql.getSession(config).then(
                                                     .execute()
                                                     .then(
                                                         result => {
-                                                            const actualCards = result.fetchAll();
-
                                                             getLastDeclaration(s, gameId).then(
                                                                 ({ lastDeclaration }) => {
+                                                                    const actualCards = result.fetchAll();
                                                                     const allCardsSame = actualCards.every(
                                                                         ([name]) =>
                                                                             name === lastDeclaration.shape
@@ -999,7 +998,8 @@ mysql.getSession(config).then(
                                                                                 handleChallenge(
                                                                                     s,
                                                                                     gameId,
-                                                                                    previousPlayerId
+                                                                                    previousPlayerId,
+                                                                                    actualCards
                                                                                 ).then(
                                                                                     () => {
                                                                                         res.send({
@@ -1028,7 +1028,12 @@ mysql.getSession(config).then(
                                                                         return;
                                                                     }
 
-                                                                    handleChallenge(s, gameId, userId).then(
+                                                                    handleChallenge(
+                                                                        s,
+                                                                        gameId,
+                                                                        userId,
+                                                                        actualCards
+                                                                    ).then(
                                                                         () => {
                                                                             res.send({
                                                                                 gameId,
