@@ -7,7 +7,7 @@ const app = express();
 const PORT = 30000;
 const TOTAL_PLAYERS_IN_GAME = 2;
 
-const config = {
+const CONFIG = {
     user: 'root',
     password: 'Pmic93nena!',
     schema: 'bluff',
@@ -31,296 +31,196 @@ class UserNotFoundError extends Error {
     }
 }
 
-const getUser = (session, userId) => {
-    return session
-        .sql(`SELECT id from user WHERE id=${userId};`)
-        .execute()
-        .then(
-            result => {
-                const userIds = result.fetchAll();
+const checkUserExistence = async (session, userId) => {
+    const result = await session.sql(`SELECT id from user WHERE id=${userId};`).execute();
+    const userIds = result.fetchAll();
 
-                if (!userIds.length) {
-                    throw new UserNotFoundError('User not found!');
-                }
-
-                return userIds[0][0];
-            },
-            error => {
-                throw new Error(error);
-            }
-        );
+    if (!userIds.length) {
+        throw new UserNotFoundError('User not found!');
+    }
 };
 
-const findNextPlayerOrder = (session, gameId) => {
-    return session
+const findNextPlayerOrder = async (session, gameId) => {
+    const lastPlayerRes = await session
         .sql(
             `SELECT id, user_id FROM game_hand
             WHERE type="thrown" OR type="challenged" AND game_id=${gameId}
             ORDER BY id DESC
             LIMIT 1;`
         )
-        .execute()
-        .then(
-            result => {
-                const lastPlayer = result.fetchOne();
+        .execute();
 
-                if (!lastPlayer) {
-                    return Promise.resolve(1);
-                }
+    const lastPlayer = lastPlayerRes.fetchOne();
 
-                return session
-                    .sql(
-                        `SELECT user_order FROM game_user_sequence
-                         WHERE game_id=${gameId} AND user_id=${lastPlayer[1]};`
-                    )
-                    .execute()
-                    .then(result => {
-                        const lastPlayerOrder = result.fetchOne()[0];
-                        return lastPlayerOrder === TOTAL_PLAYERS_IN_GAME ? 1 : lastPlayerOrder + 1;
-                    });
-            },
-            error => {
-                throw new Error(error);
-            }
-        );
-};
+    if (!lastPlayer) {
+        return 1;
+    }
 
-const isNextPlayer = (session, gameId, userId) => {
-    return findNextPlayerOrder(session, gameId).then(order => {
-        return session
-            .sql(
-                `SELECT * FROM game_user_sequence
-                WHERE game_id=${gameId} AND user_id=${userId} AND user_order=${order}
-                LIMIT 1;`
-            )
-            .execute()
-            .then(
-                result => {
-                    const nextPlayer = result.fetchOne();
-                    return !!nextPlayer;
-                },
-                error => {
-                    throw new Error(error);
-                }
-            );
-    });
-};
-
-const createGameUserSequence = (session, gameId, userId, userOrder) => {
-    return session
+    const lastPlayerOrderRes = await session
         .sql(
-            `INSERT INTO game_user_sequence (game_id, user_id, user_order) VALUES (${gameId}, ${userId}, ${userOrder})`
+            `SELECT user_order FROM game_user_sequence
+            WHERE game_id=${gameId} AND user_id=${lastPlayer[1]};`
         )
-        .execute()
-        .then(
-            () => {},
-            error => {
-                throw new Error(error);
-            }
-        );
+        .execute();
+
+    const lastPlayerOrder = lastPlayerOrderRes.fetchOne()[0];
+    return lastPlayerOrder === TOTAL_PLAYERS_IN_GAME ? 1 : lastPlayerOrder + 1;
 };
 
-const getUserCards = (session, gameId, userId) => {
+const isNextPlayer = async (session, gameId, userId) => {
+    const order = await findNextPlayerOrder(session, gameId);
+    const nextPlayerRes = await session
+        .sql(
+            `SELECT * FROM game_user_sequence
+            WHERE game_id=${gameId} AND user_id=${userId} AND user_order=${order}
+            LIMIT 1;`
+        )
+        .execute();
+
+    return !!nextPlayerRes.fetchOne();
+};
+
+const createGameUserSequence = async (session, gameId, userId, userOrder) => {
+    await session
+        .sql(
+            `INSERT INTO game_user_sequence (game_id, user_id, user_order)
+            VALUES (${gameId}, ${userId}, ${userOrder});`
+        )
+        .execute();
+};
+
+const getUserCards = async (session, gameId, userId) => {
     // find largest id from "current" game_hand and resolve foreign keys with joins
     // in order to get user's current cards
-    return session
+    const result = await session
         .sql(
             `SELECT card.id as id, card_shape.name as shape, card_symbol.name as symbol FROM card
             INNER JOIN card_symbol ON card.symbol_id=card_symbol.id
             INNER JOIN card_shape ON card.shape_id=card_shape.id
             WHERE card.id IN (
-            SELECT card_id FROM game_hand_user_card
-            WHERE game_hand_id IN (
-            SELECT max(id)
-            FROM game_hand
-            WHERE game_id=${gameId} AND user_id=${userId} AND type="current"))
+                SELECT card_id FROM game_hand_user_card
+                WHERE game_hand_id IN (
+                    SELECT max(id)
+                    FROM game_hand
+                    WHERE game_id=${gameId} AND user_id=${userId} AND type="current"
+                )
+            )
             ORDER BY shape;`
         )
-        .execute()
-        .then(result => {
-            return result.fetchAll().map(([id, shape, symbol]) => ({ id, shape, symbol }));
-        });
+        .execute();
+
+    return result.fetchAll().map(([id, shape, symbol]) => ({ id, shape, symbol }));
 };
 
-const getLastThrownHandId = (session, gameId) => {
-    return session
+const getLastThrownHandId = async (session, gameId) => {
+    const result = await session
         .sql(`SELECT max(id) FROM game_hand WHERE game_id=${gameId} AND type="thrown";`)
-        .execute()
-        .then(
-            result => {
-                const lastThrown = result.fetchOne();
+        .execute();
 
-                if (!lastThrown.length) {
-                    throw new Error('No player has played yet, no declaration found');
-                }
+    const lastThrown = result.fetchOne();
 
-                return lastThrown[0];
-            },
-            error => {
-                throw new Error(error);
-            }
-        );
+    if (!lastThrown) {
+        throw new Error('No player has played yet, no declaration found');
+    }
+
+    return lastThrown[0];
 };
 
-const getLastDeclaration = (session, gameId) => {
-    return getLastThrownHandId(session, gameId).then(
-        lastThrownId => {
-            return session
-                .sql(`SELECT card_id FROM game_hand_card WHERE game_hand_id=${lastThrownId} AND type="said";`)
-                .execute()
-                .then(
-                    result => {
-                        const saidCards = result.fetchAll();
-                        const quantity = saidCards.length;
+const getLastDeclaration = async (session, gameId) => {
+    const lastThrownId = await getLastThrownHandId(session, gameId);
+    const saidCardsRes = await session
+        .sql(`SELECT card_id FROM game_hand_card WHERE game_hand_id=${lastThrownId} AND type="said";`)
+        .execute();
 
-                        if (!quantity) {
-                            return {
-                                lastDeclaration: {},
-                            };
-                        }
+    const saidCards = saidCardsRes.fetchAll();
+    const quantity = saidCards.length;
 
-                        const sampleCardId = saidCards[0][0];
+    if (!quantity) {
+        return {
+            lastDeclaration: {},
+        };
+    }
 
-                        return session
-                            .sql(
-                                `SELECT card_shape.name FROM card
-                                INNER JOIN card_shape ON card.shape_id=card_shape.id
-                                WHERE card.id=${sampleCardId};`
-                            )
-                            .execute()
-                            .then(
-                                result => {
-                                    return {
-                                        lastDeclaration: {
-                                            quantity,
-                                            shape: result.fetchOne()[0],
-                                        },
-                                    };
-                                },
-                                error => {
-                                    throw new Error(error);
-                                }
-                            );
-                    },
-                    error => {
-                        throw new Error(error);
-                    }
-                );
+    const sampleCardId = saidCards[0][0];
+
+    const shapeRes = await session
+        .sql(
+            `SELECT card_shape.name FROM card
+            INNER JOIN card_shape ON card.shape_id=card_shape.id
+            WHERE card.id=${sampleCardId};`
+        )
+        .execute();
+
+    return {
+        lastDeclaration: {
+            quantity,
+            shape: shapeRes.fetchOne()[0],
         },
-        error => {
-            // TODO: not used only in there
-            handleError(res, error, 'GET /last-declaration?gameId=');
-        }
-    );
+    };
 };
 
-const getNextPlayer = (session, gameId) => {
-    return findNextPlayerOrder(session, gameId).then(
-        nextPlayerOrder => {
-            return session
-                .sql(
-                    `SELECT g.user_id, user.name FROM game_user_sequence as g
-                    INNER JOIN user ON user.id=g.user_id
-                    WHERE g.game_id=${gameId} and g.user_order=${nextPlayerOrder};`
-                )
-                .execute()
-                .then(
-                    nextPlayer => {
-                        const [id, name] = nextPlayer.fetchOne() || [];
-                        return { id, name };
-                    },
-                    error => {
-                        throw new Error(error);
-                    }
-                );
-        },
-        error => {
-            throw new Error(error);
-        }
-    );
+const getNextPlayer = async (session, gameId) => {
+    const nextPlayerOrder = await findNextPlayerOrder(session, gameId);
+
+    const nextPlayerRes = await session
+        .sql(
+            `SELECT g.user_id, user.name
+            FROM game_user_sequence as g
+            INNER JOIN user ON user.id=g.user_id
+            WHERE g.game_id=${gameId} AND g.user_order=${nextPlayerOrder};`
+        )
+        .execute();
+
+    const [id, name] = nextPlayerRes.fetchOne() || [];
+    return { id, name };
 };
 
-const getPreviousPlayerId = (session, gameId, userId) => {
-    return session
+const getPreviousPlayerId = async (session, gameId, userId) => {
+    const userOrderRes = await session
         .sql(
             `SELECT user_order
             FROM game_user_sequence
             WHERE game_id=${gameId} AND user_id=${userId};`
         )
-        .execute()
-        .then(
-            result => {
-                const [userOrder] = result.fetchOne();
-                const previousPlayerOrder = userOrder === 1 ? TOTAL_PLAYERS_IN_GAME : userOrder - 1;
+        .execute();
 
-                return session
-                    .sql(
-                        `SELECT user_id
-                        FROM game_user_sequence
-                        WHERE game_id=${gameId} AND user_order=${previousPlayerOrder}`
-                    )
-                    .execute()
-                    .then(
-                        result => {
-                            const [previousPlayerId] = result.fetchOne();
-                            return previousPlayerId;
-                        },
-                        error => {
-                            throw new Error(error);
-                        }
-                    );
-            },
-            error => {
-                throw new Error(error);
-            }
-        );
+    const [userOrder] = userOrderRes.fetchOne();
+    const previousPlayerOrder = userOrder === 1 ? TOTAL_PLAYERS_IN_GAME : userOrder - 1;
+
+    const previousPlayerIdRes = await session
+        .sql(
+            `SELECT user_id
+            FROM game_user_sequence
+            WHERE game_id=${gameId} AND user_order=${previousPlayerOrder};`
+        )
+        .execute();
+
+    return previousPlayerIdRes.fetchOne()[0];
 };
 
-const handleChallenge = (session, gameId, userId, bluffCards) => {
-    return getUserCards(session, gameId, userId).then(
-        userCards => {
-            session
-                .sql(
-                    `INSERT INTO game_hand (game_id, user_id, type)
-                    VALUES (${gameId}, ${userId}, "current");`
-                )
-                .execute()
-                .then(
-                    result => {
-                        const gameHandId = result.getAutoIncrementValue();
+const handleChallenge = async (session, gameId, userId, bluffCards) => {
+    const userCards = await getUserCards(session, gameId, userId);
 
-                        const userCardIds = userCards
-                            .map(({ id }) => id)
-                            .concat(bluffCards.map(([_, id]) => id));
+    const insertRes = await session
+        .sql(
+            `INSERT INTO game_hand (game_id, user_id, type)
+            VALUES (${gameId}, ${userId}, "current");`
+        )
+        .execute();
 
-                        // insert new cards for user
-                        session
-                            .sql(
-                                `INSERT INTO game_hand_user_card (game_hand_id, user_id, card_id)
-                                VALUES ${userCardIds
-                                    .map(id => `(${gameHandId}, ${userId}, ${id})`)
-                                    .join(',')};`
-                            )
-                            .execute()
-                            .then(
-                                () => {},
-                                error => {
-                                    throw new Error(error);
-                                }
-                            );
-                    },
-                    error => {
-                        throw new Error(error);
-                    }
-                );
-        },
-        error => {
-            throw new Error(error);
-        }
-    );
+    const gameHandId = insertRes.getAutoIncrementValue();
+    const userCardIds = userCards.map(({ id }) => id).concat(bluffCards.map(([_, id]) => id));
+
+    // insert new cards for user
+    await session
+        .sql(
+            `INSERT INTO game_hand_user_card (game_hand_id, user_id, card_id)
+            VALUES ${userCardIds.map(id => `(${gameHandId}, ${userId}, ${id})`).join(',')};`
+        )
+        .execute();
 };
 
-mysql.getSession(config).then(
+mysql.getSession(CONFIG).then(
     s => {
         app.set('json spaces', 2);
 
@@ -337,7 +237,7 @@ mysql.getSession(config).then(
             });
         });
 
-        app.get('/login', (req, res) => {
+        app.get('/login', async (req, res) => {
             const name = req.query.name;
 
             if (!name) {
@@ -345,46 +245,43 @@ mysql.getSession(config).then(
                 return;
             }
 
-            // insert new user to db
-            s.sql(`INSERT INTO user (name) VALUES ("${name}");`)
-                .execute()
-                .then(
-                    result => {
-                        const userId = result.getAutoIncrementValue();
+            try {
+                // insert new user to db
+                const insertRes = await s.sql(`INSERT INTO user (name) VALUES ("${name}");`).execute();
+                const userId = insertRes.getAutoIncrementValue();
 
-                        // check which games await for users (not full)
-                        s.sql(
-                            `SELECT game_id, COUNT(*) as count from game_user_sequence GROUP BY game_id HAVING count < ${TOTAL_PLAYERS_IN_GAME};`
-                        )
-                            .execute()
-                            .then(result => {
-                                const availableGames = result.fetchAll();
-                                const availableGameIds = availableGames.map(game => game[0]);
+                // check which games await for users (not full)
+                const availableGamesRes = await s
+                    .sql(
+                        `SELECT game_id, COUNT(*) as count
+                        FROM game_user_sequence
+                        GROUP BY game_id
+                        HAVING count < ${TOTAL_PLAYERS_IN_GAME};`
+                    )
+                    .execute();
+                const availableGameIds = availableGamesRes.fetchAll().map(game => game[0]);
 
-                                res.send({
-                                    message:
-                                        `You logged in successfully. Your unique userId is ${userId}. ` +
-                                        'You need to remember it for the duration of your game. ' +
-                                        `${
-                                            availableGameIds.length
-                                                ? `There exist the following available games: ${JSON.stringify(
-                                                      availableGameIds
-                                                  )}. You can either connect to one of them, or create a new game`
-                                                : 'There are no available games at the moment. Please create a new game!'
-                                        }`,
-                                    userId,
-                                    name,
-                                    availableGameIds,
-                                });
-                            });
-                    },
-                    error => {
-                        handleError(res, error, 'GET /login?name=');
-                    }
-                );
+                res.send({
+                    message:
+                        `You logged in successfully. Your unique userId is ${userId}. ` +
+                        'You need to remember it for the duration of your game. ' +
+                        `${
+                            availableGameIds.length
+                                ? `There exist the following available games: ${JSON.stringify(
+                                      availableGameIds
+                                  )}. You can either connect to one of them, or create a new game`
+                                : 'There are no available games at the moment. Please create a new game!'
+                        }`,
+                    userId,
+                    name,
+                    availableGameIds,
+                });
+            } catch (error) {
+                handleError(res, error, 'GET /login?name=');
+            }
         });
 
-        app.get('/new-game', (req, res) => {
+        app.get('/new-game', async (req, res) => {
             const userId = req.query.userId;
 
             if (!userId) {
@@ -392,52 +289,43 @@ mysql.getSession(config).then(
                 return;
             }
 
-            getUser(s, userId)
-                .then(() => {
-                    // create new game in db
-                    s.sql(
-                        `INSERT INTO game (created_by_user_id, creation_date) VALUES (${userId}, "${new Date()
+            try {
+                await checkUserExistence(s, userId);
+
+                // create new game in db
+                const insertRes = await s
+                    .sql(
+                        `INSERT INTO game (created_by_user_id, creation_date)
+                        VALUES (${userId}, "${new Date()
                             .toISOString()
                             // remove milliseconds
                             .slice(0, 19)
                             .replace('T', ' ')}");`
                     )
-                        .execute()
-                        .then(
-                            result => {
-                                const gameId = result.getAutoIncrementValue();
+                    .execute();
 
-                                createGameUserSequence(s, gameId, userId, 1)
-                                    .then(() => {
-                                        res.send({
-                                            message:
-                                                `A new game was created successfully. Your game id is ${gameId}. ` +
-                                                'You need to remember it for the duration of your game. ' +
-                                                'Your sequence order is 1.',
-                                            gameId,
-                                        });
-                                    })
-                                    .catch(error => {
-                                        handleError(res, error, 'GET /new-game?userId=');
-                                    });
-                            },
-                            error => {
-                                handleError(res, error, 'GET /new-game?userId=');
-                            }
-                        );
-                })
-                .catch(error => {
-                    if (error instanceof UserNotFoundError) {
-                        handleError(
-                            res,
-                            `No user found with id=${userId}. You have to login first`,
-                            'GET /login?name='
-                        );
-                        return;
-                    }
+                const gameId = insertRes.getAutoIncrementValue();
+                await createGameUserSequence(s, gameId, userId, 1);
 
-                    throw error;
+                res.send({
+                    message:
+                        `A new game was created successfully. Your game id is ${gameId}. ` +
+                        'You need to remember it for the duration of your game. ' +
+                        'Your sequence order is 1.',
+                    gameId,
                 });
+            } catch (error) {
+                if (error instanceof UserNotFoundError) {
+                    handleError(
+                        res,
+                        `No user found with id=${userId}. You have to login first`,
+                        'GET /login?name='
+                    );
+                    return;
+                }
+
+                handleError(res, error, 'GET /new-game?userId=');
+            }
         });
 
         app.get('/join-game', (req, res) => {
@@ -449,7 +337,7 @@ mysql.getSession(config).then(
                 return;
             }
 
-            getUser(s, userId)
+            checkUserExistence(s, userId)
                 .then(() => {
                     // search for game
                     s.sql(`SELECT id from game WHERE id=${gameId};`)
@@ -658,7 +546,7 @@ mysql.getSession(config).then(
                 });
         });
 
-        app.get('/my-cards', (req, res) => {
+        app.get('/my-cards', async (req, res) => {
             const userId = req.query.userId;
             const gameId = req.query.gameId;
 
@@ -667,33 +555,31 @@ mysql.getSession(config).then(
                 return;
             }
 
-            getUserCards(s, gameId, userId).then(
-                myCards => {
-                    // get all deck cards
-                    s.sql(
-                        `SELECT card.id as id, card_shape.name as shape, card_symbol.name as symbol FROM card
-                            INNER JOIN card_symbol ON card.symbol_id=card_symbol.id
-                            INNER JOIN card_shape ON card.shape_id=card_shape.id
-                            ORDER BY symbol;`
-                    )
-                        .execute()
-                        .then(result => {
-                            const allCards = result
-                                .fetchAll()
-                                .map(([id, shape, symbol]) => ({ id, shape, symbol }));
+            try {
+                const myCards = await getUserCards(s, gameId, userId);
 
-                            res.send({
-                                myCards,
-                                userId,
-                                gameId,
-                                allCards,
-                            });
-                        });
-                },
-                error => {
-                    handleError(res, error, 'GET /my-cards?userId=&gameId=');
-                }
-            );
+                // get all deck cards
+                const allCardsRes = await s
+                    .sql(
+                        `SELECT card.id as id, card_shape.name as shape, card_symbol.name as symbol
+                        FROM card
+                        INNER JOIN card_symbol ON card.symbol_id=card_symbol.id
+                        INNER JOIN card_shape ON card.shape_id=card_shape.id
+                        ORDER BY symbol;`
+                    )
+                    .execute();
+
+                const allCards = allCardsRes.fetchAll().map(([id, shape, symbol]) => ({ id, shape, symbol }));
+
+                res.send({
+                    myCards,
+                    userId,
+                    gameId,
+                    allCards,
+                });
+            } catch (error) {
+                handleError(res, error, 'GET /my-cards?userId=&gameId=');
+            }
         });
 
         app.get('/throw', (req, res) => {
@@ -912,7 +798,7 @@ mysql.getSession(config).then(
                 });
         });
 
-        app.get('/last-declaration', (req, res) => {
+        app.get('/last-declaration', async (req, res) => {
             const gameId = req.query.gameId;
 
             if (!gameId) {
@@ -920,14 +806,12 @@ mysql.getSession(config).then(
                 return;
             }
 
-            getLastDeclaration(s, gameId).then(
-                result => {
-                    res.send(result);
-                },
-                error => {
-                    handleError(res, error, 'GET /last-declaration?gameId=');
-                }
-            );
+            try {
+                const result = await getLastDeclaration(s, gameId);
+                res.send(result);
+            } catch (error) {
+                handleError(res, error, 'GET /last-declaration?gameId=');
+            }
         });
 
         app.get('/challenge', (req, res) => {
@@ -1107,7 +991,7 @@ mysql.getSession(config).then(
                 .then(result => {
                     const game = result.fetchOne();
 
-                    if (!game.length) {
+                    if (!game) {
                         handleError(res, `No game with id=${gameId} found`);
                         return;
                     }
