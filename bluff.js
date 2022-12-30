@@ -220,6 +220,37 @@ const handleChallenge = async (session, gameId, userId, bluffCards) => {
         .execute();
 };
 
+const isGameOver = async (session, gameId, userId) => {
+    const { hasWinner, winner } = await gameHasWinner(session, gameId);
+
+    if (hasWinner) {
+        return { winner, over: true };
+    }
+
+    const previousPlayerId = await getPreviousPlayerId(session, gameId, userId);
+    const previousPlayerCards = await getUserCards(session, gameId, previousPlayerId);
+
+    // previous player has no cards => winner
+    if (!previousPlayerCards.length) {
+        // update winner for gameId
+        await session.sql(`UPDATE game SET won_by_user_id=${previousPlayerId} WHERE id=${gameId}`).execute();
+        return { winner: previousPlayerId, over: true };
+    }
+
+    return { over: false };
+};
+
+const gameHasWinner = async (session, gameId) => {
+    const result = await session.sql(`SELECT won_by_user_id FROM game WHERE id=${gameId};`).execute();
+    const game = result.fetchOne();
+
+    if (!game) {
+        return { hasWinner: false };
+    }
+
+    return { hasWinner: true, winner: game[0] };
+};
+
 mysql.getSession(CONFIG).then(
     s => {
         app.set('json spaces', 2);
@@ -556,6 +587,15 @@ mysql.getSession(CONFIG).then(
             }
 
             try {
+                const { over, winner } = await isGameOver(s, gameId, userId);
+
+                if (over) {
+                    res.send({
+                        result: `Game is over. Winner is user with id=${winner}`,
+                    });
+                    return;
+                }
+
                 const myCards = await getUserCards(s, gameId, userId);
 
                 // get all deck cards
@@ -630,7 +670,7 @@ mysql.getSession(CONFIG).then(
 
             s.sql(`SELECT id FROM card_shape WHERE name="${shape}";`)
                 .execute()
-                .then(result => {
+                .then(async result => {
                     const cardShape = result.fetchAll();
 
                     if (!cardShape.length) {
@@ -639,6 +679,15 @@ mysql.getSession(CONFIG).then(
                             "provided shape doesn't exist",
                             'GET /throw?userId=&gameId=&quantity=&shape=&actual='
                         );
+                        return;
+                    }
+
+                    const { over, winner } = await isGameOver(s, gameId, userId);
+
+                    if (over) {
+                        res.send({
+                            result: `Game is over. Winner is user with id=${winner}`,
+                        });
                         return;
                     }
 
@@ -727,6 +776,18 @@ mysql.getSession(CONFIG).then(
                                                                                             `(${currentGameHandId}, ${userId}, ${c.id})`
                                                                                     );
 
+                                                                                if (!cardRows.length) {
+                                                                                    res.send({
+                                                                                        message:
+                                                                                            'Your turn was successfull',
+                                                                                        myCards:
+                                                                                            updatedUserCards,
+                                                                                        gameId,
+                                                                                        userId,
+                                                                                    });
+                                                                                    return;
+                                                                                }
+
                                                                                 // insert remaining user cards for game_hand_id
                                                                                 s.sql(
                                                                                     `INSERT INTO game_hand_user_card (game_hand_id, user_id, card_id) VALUES ${cardRows.join(
@@ -807,6 +868,15 @@ mysql.getSession(CONFIG).then(
             }
 
             try {
+                const { over, winner } = await isGameOver(s, gameId);
+
+                if (over) {
+                    res.send({
+                        result: `Game is over. Winner is user with id=${winner}`,
+                    });
+                    return;
+                }
+
                 const result = await getLastDeclaration(s, gameId);
                 res.send(result);
             } catch (error) {
@@ -824,13 +894,22 @@ mysql.getSession(CONFIG).then(
             }
 
             getLastDeclaration(s, gameId).then(
-                ({ lastDeclaration }) => {
+                async ({ lastDeclaration }) => {
                     if (_.isEmpty(lastDeclaration)) {
                         handleError(
                             res,
                             'Cannot challenge. No player has played yet',
                             'GET /challenge?userId=&gameId='
                         );
+                        return;
+                    }
+
+                    const { over, winner } = await isGameOver(s, gameId, userId);
+
+                    if (over) {
+                        res.send({
+                            result: `Game is over. Winner is user with id=${winner}`,
+                        });
                         return;
                     }
 
