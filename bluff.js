@@ -233,7 +233,16 @@ const isGameOver = async (session, gameId, userId) => {
     // previous player has no cards => winner
     if (!previousPlayerCards.length) {
         // update winner for gameId
-        await session.sql(`UPDATE game SET won_by_user_id=${previousPlayerId} WHERE id=${gameId}`).execute();
+        await session.sql(`UPDATE game SET won_by_user_id=${previousPlayerId} WHERE id=${gameId};`).execute();
+
+        // update score for winner
+        await session
+            .sql(
+                `INSERT INTO scoreboard (user_id, score)
+                VALUES (${previousPlayerId}, 1)
+                ON DUPLICATE KEY UPDATE score = score + 1;`
+            )
+            .execute();
         return { winner: previousPlayerId, over: true };
     }
 
@@ -1128,6 +1137,55 @@ mysql.getSession(CONFIG).then(
                             }
                         );
                 });
+        });
+
+        app.get('/score', async (req, res) => {
+            const userId = req.query.userId;
+
+            if (!userId) {
+                // show all scores
+                const result = await s
+                    .sql(
+                        `SELECT s.id, s.user_id, user.name, s.score
+                        FROM scoreboard as s
+                        INNER JOIN user ON user.id=s.user_id;`
+                    )
+                    .execute();
+                const scoreboard = result.fetchAll();
+
+                res.send({
+                    scoreboard: scoreboard.map(([id, user_id, name, score]) => ({
+                        id,
+                        userId: user_id,
+                        userName: name,
+                        score,
+                    })),
+                });
+                return;
+            }
+
+            // show single user score
+            const result = await s
+                .sql(
+                    `SELECT s.id, s.user_id, user.name, s.score
+                    FROM scoreboard as s
+                    INNER JOIN user ON user.id=s.user_id
+                    WHERE s.user_id=${userId};`
+                )
+                .execute();
+            const scoreboard = result.fetchOne();
+
+            res.send({
+                scoreboard: scoreboard
+                    ? {
+                          id: scoreboard[0],
+                          userId: scoreboard[1],
+                          userName: scoreboard[2],
+                          score: scoreboard[3],
+                      }
+                    : {},
+            });
+            return;
         });
     },
     error => {
