@@ -40,7 +40,7 @@ const handleError = (res, error, endpoint) => {
         result.endpoint = endpoint;
     }
 
-    res.send(result);
+    res.json(result);
 };
 
 class UserNotFoundError extends Error {
@@ -460,7 +460,7 @@ connection.connect(async error => {
     app.set('json spaces', 2);
 
     app.get('/rules', (_req, res) => {
-        res.send({
+        res.json({
             rules:
                 'Καλως ηρθατε στην Μπλοφα. Οι κανονες ειναι: ' +
                 `1. Το παιχνιδι παιζεται με ${TOTAL_PLAYERS_IN_GAME} παικτες. ` +
@@ -494,7 +494,7 @@ connection.connect(async error => {
             );
             const availableGameIds = availableGames.map(({ game_id }) => game_id);
 
-            res.send({
+            res.json({
                 message:
                     `You logged in successfully. Your unique userId is ${userId}. ` +
                     'You need to remember it for the duration of your game. ' +
@@ -538,7 +538,7 @@ connection.connect(async error => {
             const gameId = insertRes.insertId;
             await createGameUserSequence(gameId, userId, 1);
 
-            res.send({
+            res.json({
                 message:
                     `A new game was created successfully. Your game id is ${gameId}. ` +
                     'You need to remember it for the duration of your game. ' +
@@ -613,7 +613,7 @@ connection.connect(async error => {
             await createGameUserSequence(gameId, userId, userOrder);
 
             if (usersInGame.length + 1 !== TOTAL_PLAYERS_IN_GAME) {
-                res.send({
+                res.json({
                     message:
                         `You have successfully joined the game with gameId=${gameId}. ` +
                         `Your sequence order is ${userOrder}.`,
@@ -660,7 +660,7 @@ connection.connect(async error => {
                     );
                 })
             );
-            res.send({
+            res.json({
                 message:
                     `You have successfully joined the game with gameId=${gameId}. ` +
                     `Your sequence order is ${userOrder}.`,
@@ -706,7 +706,7 @@ connection.connect(async error => {
             const { over, winner } = await isGameOver(gameId);
 
             if (over) {
-                res.send({
+                res.json({
                     result: `Game is over. Winner is user with id=${winner}`,
                 });
                 return;
@@ -723,7 +723,7 @@ connection.connect(async error => {
                 ORDER BY symbol;`
             );
 
-            res.send({
+            res.json({
                 myCards,
                 userId,
                 gameId,
@@ -806,7 +806,7 @@ connection.connect(async error => {
             const { over, winner } = await isGameOver(gameId);
 
             if (over) {
-                res.send({ result: `Game is over. Winner is user with id=${winner}` });
+                res.json({ result: `Game is over. Winner is user with id=${winner}` });
                 return;
             }
 
@@ -841,7 +841,7 @@ connection.connect(async error => {
             if (!previousPlayerCards.length) {
                 await setWinnerAndUpdateScore(gameId, previousPlayerId);
 
-                res.send({
+                res.json({
                     result: `Game is over. Winner is user with id=${previousPlayerId}`,
                 });
                 return;
@@ -883,7 +883,7 @@ connection.connect(async error => {
             const cardRows = updatedUserCards.map(c => `(${currentGameHandId}, ${userId}, ${c.id})`);
 
             if (!cardRows.length) {
-                res.send({
+                res.json({
                     message: 'Your turn was successfull',
                     myCards: updatedUserCards,
                     gameId,
@@ -898,7 +898,7 @@ connection.connect(async error => {
                 VALUES ${cardRows.join(',')};`
             );
 
-            res.send({
+            res.json({
                 message: 'Your turn was successfull',
                 myCards: updatedUserCards,
                 gameId,
@@ -939,12 +939,12 @@ connection.connect(async error => {
             const { over, winner } = await isGameOver(gameId);
 
             if (over) {
-                res.send({ result: `Game is over. Winner is user with id=${winner}` });
+                res.json({ result: `Game is over. Winner is user with id=${winner}` });
                 return;
             }
 
             const result = await getLastDeclaration(gameId);
-            res.send(result);
+            res.json(result);
         } catch (error) {
             if (error instanceof GameNotFoundError) {
                 handleError(res, `Game with id=${gameId} not found`, 'GET /last-declaration?gameId=');
@@ -970,7 +970,7 @@ connection.connect(async error => {
             const { over, winner } = await isGameOver(gameId);
 
             if (over) {
-                res.send({
+                res.json({
                     result: `Game is over. Winner is user with id=${winner}`,
                 });
                 return;
@@ -1016,7 +1016,7 @@ connection.connect(async error => {
                 // previous player takes the bluff cards
                 await handleChallenge(gameId, previousPlayerId, actualCards);
 
-                res.send({
+                res.json({
                     gameId,
                     userId,
                     result: `Your bluff was successfull! Last thrown cards are in the deck of user with id=${previousPlayerId}.`,
@@ -1032,13 +1032,13 @@ connection.connect(async error => {
             if (!previousPlayerCards.length) {
                 await setWinnerAndUpdateScore(gameId, previousPlayerId);
 
-                res.send({
+                res.json({
                     result: `Your bluff was unsuccessfull! Last thrown cards are in your deck. Game is over. Winner is user with id=${previousPlayerId}`,
                 });
                 return;
             }
 
-            res.send({
+            res.json({
                 gameId,
                 userId,
                 result: 'Your bluff was unsuccessfull! Last thrown cards are in your deck.',
@@ -1106,7 +1106,7 @@ connection.connect(async error => {
                 const lastDeclaration = await getLastDeclaration(gameId);
                 const nextPlayer = await getNextPlayer(gameId);
 
-                res.send({
+                res.json({
                     // spread operator
                     ...result,
                     ...lastDeclaration,
@@ -1114,7 +1114,7 @@ connection.connect(async error => {
                 });
             }
 
-            res.send(result);
+            res.json(result);
         } catch (error) {
             if (error instanceof GameNotFoundError) {
                 handleError(res, `Game with id=${gameId} not found`, 'GET /last-declaration?gameId=');
@@ -1136,7 +1136,7 @@ connection.connect(async error => {
                 INNER JOIN user ON user.id=s.user_id;`
             );
 
-            res.send({
+            res.json({
                 scoreboard: scoreboard.map(({ id, user_id, name, score }) => ({
                     id,
                     userId: user_id,
@@ -1155,7 +1155,7 @@ connection.connect(async error => {
             WHERE s.user_id=${userId};`
         );
 
-        res.send({
+        res.json({
             scoreboard: scoreboard
                 ? {
                       id: scoreboard.id,
