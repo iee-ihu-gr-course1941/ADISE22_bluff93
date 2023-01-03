@@ -50,11 +50,26 @@ class UserNotFoundError extends Error {
     }
 }
 
+class GameNotFoundError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'GameNotFoundError';
+    }
+}
+
 const checkUserExistence = async userId => {
     const users = await queryPromise(`SELECT id FROM user WHERE id=${userId};`);
 
     if (!users.length) {
         throw new UserNotFoundError('User not found!');
+    }
+};
+
+const checkGameExistence = async gameId => {
+    const games = await queryPromise(`SELECT * FROM game WHERE id=${gameId};`);
+
+    if (!games.length) {
+        throw new GameNotFoundError('Game not found!');
     }
 };
 
@@ -457,7 +472,6 @@ connection.connect(async error => {
         });
     });
 
-    // works
     app.get('/login', async (req, res) => {
         const { name } = req.query;
 
@@ -500,7 +514,6 @@ connection.connect(async error => {
         }
     });
 
-    // works
     app.get('/new-game', async (req, res) => {
         const { userId } = req.query;
 
@@ -546,7 +559,6 @@ connection.connect(async error => {
         }
     });
 
-    // works
     app.get('/join-game', async (req, res) => {
         const { userId, gameId } = req.query;
 
@@ -556,19 +568,8 @@ connection.connect(async error => {
         }
 
         try {
+            await checkGameExistence(gameId);
             await checkUserExistence(userId);
-
-            // search for game
-            const allGameIds = await queryPromise(`SELECT id FROM game WHERE id=${gameId};`);
-
-            if (!allGameIds.length) {
-                handleError(
-                    res,
-                    `Game with gameId=${gameId} doesn't exist. Please create a new game.`,
-                    'GET /new-game?userId='
-                );
-                return;
-            }
 
             // check if user is indeed in the game
             const userRes = await queryPromise(
@@ -637,7 +638,7 @@ connection.connect(async error => {
                 acc[userId] = _.take(shuffledCards, noCardsPerUser);
 
                 // and remove them from the list of cards
-                shuffledCards.splice(0, noCardsPerUser - 1);
+                shuffledCards.splice(0, noCardsPerUser);
 
                 return acc;
             }, {});
@@ -677,11 +678,19 @@ connection.connect(async error => {
                 return;
             }
 
+            if (error instanceof GameNotFoundError) {
+                handleError(
+                    res,
+                    `Game with gameId=${gameId} doesn't exist. Please create a new game.`,
+                    'GET /new-game?userId='
+                );
+                return;
+            }
+
             handleError(res, error, 'GET /join-game?userId=&gameId=');
         }
     });
 
-    // works
     app.get('/my-cards', async (req, res) => {
         const { userId, gameId } = req.query;
 
@@ -691,6 +700,9 @@ connection.connect(async error => {
         }
 
         try {
+            await checkGameExistence(gameId);
+            await checkUserExistence(userId);
+
             const { over, winner } = await isGameOver(gameId);
 
             if (over) {
@@ -718,6 +730,17 @@ connection.connect(async error => {
                 allCards,
             });
         } catch (error) {
+            if (error instanceof GameNotFoundError) {
+                handleError(res, `Game with id=${gameId} not found`, 'GET /my-cards?userId=&gameId=');
+                return;
+            }
+            if (error instanceof UserNotFoundError) {
+                handleError(
+                    res,
+                    `No user found with id=${userId}. You have to login first`,
+                    'GET /my-cards?userId=&gameId='
+                );
+            }
             handleError(res, error, 'GET /my-cards?userId=&gameId=');
         }
     });
@@ -766,6 +789,9 @@ connection.connect(async error => {
         }
 
         try {
+            await checkGameExistence(gameId);
+            await checkUserExistence(userId);
+
             const cardShapes = await queryPromise(`SELECT id FROM card_shape WHERE name="${shape}";`);
 
             if (!cardShapes.length) {
@@ -879,6 +905,22 @@ connection.connect(async error => {
                 userId,
             });
         } catch (error) {
+            if (error instanceof GameNotFoundError) {
+                handleError(
+                    res,
+                    `Game with id=${gameId} not found`,
+                    'GET /throw?userId=&gameId=&quantity=&shape=&actual='
+                );
+                return;
+            }
+            if (error instanceof UserNotFoundError) {
+                handleError(
+                    res,
+                    `No user found with id=${userId}. You have to login first`,
+                    'GET /login?name='
+                );
+            }
+
             handleError(res, error, 'GET /throw?userId=&gameId=&quantity=&shape=&actual=');
         }
     });
@@ -892,6 +934,8 @@ connection.connect(async error => {
         }
 
         try {
+            await checkGameExistence(gameId);
+
             const { over, winner } = await isGameOver(gameId);
 
             if (over) {
@@ -902,6 +946,11 @@ connection.connect(async error => {
             const result = await getLastDeclaration(gameId);
             res.send(result);
         } catch (error) {
+            if (error instanceof GameNotFoundError) {
+                handleError(res, `Game with id=${gameId} not found`, 'GET /last-declaration?gameId=');
+                return;
+            }
+
             handleError(res, error, 'GET /last-declaration?gameId=');
         }
     });
@@ -915,6 +964,9 @@ connection.connect(async error => {
         }
 
         try {
+            await checkGameExistence(gameId);
+            await checkUserExistence(userId);
+
             const { over, winner } = await isGameOver(gameId);
 
             if (over) {
@@ -992,11 +1044,22 @@ connection.connect(async error => {
                 result: 'Your bluff was unsuccessfull! Last thrown cards are in your deck.',
             });
         } catch (error) {
+            if (error instanceof GameNotFoundError) {
+                handleError(res, `Game with id=${gameId} not found`, 'GET /challenge?userId=&gameId=');
+                return;
+            }
+            if (error instanceof UserNotFoundError) {
+                handleError(
+                    res,
+                    `No user found with id=${userId}. You have to login first`,
+                    'GET /login?name='
+                );
+            }
+
             handleError(res, error, 'GET /challenge?userId=&gameId=');
         }
     });
 
-    // works
     app.get('/status', async (req, res) => {
         const { gameId } = req.query;
 
@@ -1006,17 +1069,15 @@ connection.connect(async error => {
         }
 
         try {
-            const [game] = await queryPromise(
-                `SELECT game.created_by_user_id, u1.name as createdByUsername, game.creation_date, game.won_by_user_id, u2.name as winnerName FROM game
-                INNER JOIN user as u1 ON game.created_by_user_id=u1.id
-                LEFT JOIN user as u2 ON game.won_by_user_id=u2.id
-                WHERE game.id=${gameId};`
-            );
+            await checkGameExistence(gameId);
 
-            if (!game) {
-                handleError(res, `No game with id=${gameId} found`);
-                return;
-            }
+            const [{ created_by_user_id, createdByUsername, creation_date, won_by_user_id, winnerName }] =
+                await queryPromise(
+                    `SELECT game.created_by_user_id, u1.name as createdByUsername, game.creation_date, game.won_by_user_id, u2.name as winnerName FROM game
+                    INNER JOIN user as u1 ON game.created_by_user_id=u1.id
+                    LEFT JOIN user as u2 ON game.won_by_user_id=u2.id
+                    WHERE game.id=${gameId};`
+                );
 
             const players = await queryPromise(
                 `SELECT g.user_id, user.name, g.user_order
@@ -1026,11 +1087,7 @@ connection.connect(async error => {
                 ORDER BY g.user_order;`
             );
 
-            const lastDeclaration = await getLastDeclaration(gameId);
-            const nextPlayer = await getNextPlayer(gameId);
-            const { created_by_user_id, createdByUsername, creation_date, won_by_user_id, winnerName } = game;
-
-            res.send({
+            const result = {
                 gameId,
                 game: {
                     winner: winnerName ? `${winnerName} (id: ${won_by_user_id})` : '-',
@@ -1042,17 +1099,32 @@ connection.connect(async error => {
                         name,
                         order: user_order,
                     })),
+                },
+            };
+
+            if (!winnerName) {
+                const lastDeclaration = await getLastDeclaration(gameId);
+                const nextPlayer = await getNextPlayer(gameId);
+
+                res.send({
                     // spread operator
+                    ...result,
                     ...lastDeclaration,
                     nextPlayer,
-                },
-            });
+                });
+            }
+
+            res.send(result);
         } catch (error) {
+            if (error instanceof GameNotFoundError) {
+                handleError(res, `Game with id=${gameId} not found`, 'GET /last-declaration?gameId=');
+                return;
+            }
+
             handleError(res, error, 'GET /last-declaration?gameId=');
         }
     });
 
-    // works
     app.get('/score', async (req, res) => {
         const { userId } = req.query;
 
