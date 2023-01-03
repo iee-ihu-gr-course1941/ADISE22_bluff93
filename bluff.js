@@ -219,31 +219,26 @@ const handleChallenge = async (gameId, userId, bluffCards) => {
     );
 };
 
-const isGameOver = async (gameId, userId) => {
+const isGameOver = async gameId => {
     const { hasWinner, winner } = await gameHasWinner(gameId);
 
     if (hasWinner) {
         return { winner, over: true };
     }
 
-    const previousPlayerId = await getPreviousPlayerId(gameId, userId);
-    const previousPlayerCards = await getUserCards(gameId, previousPlayerId);
-
-    // previous player has no cards => winner
-    if (!previousPlayerCards.length) {
-        // update winner for gameId
-        await queryPromise(`UPDATE game SET won_by_user_id=${previousPlayerId} WHERE id=${gameId};`);
-
-        // update score for winner
-        await queryPromise(
-            `INSERT INTO scoreboard (user_id, score)
-            VALUES (${previousPlayerId}, 1)
-            ON DUPLICATE KEY UPDATE score = score + 1;`
-        );
-        return { winner: previousPlayerId, over: true };
-    }
-
     return { over: false };
+};
+
+const setWinnerAndUpdateScore = async (gameId, winnerId) => {
+    // update winner for gameId
+    await queryPromise(`UPDATE game SET won_by_user_id=${winnerId} WHERE id=${gameId};`);
+
+    // update score for winner
+    await queryPromise(
+        `INSERT INTO scoreboard (user_id, score)
+            VALUES (${winnerId}, 1)
+            ON DUPLICATE KEY UPDATE score = score + 1;`
+    );
 };
 
 const gameHasWinner = async gameId => {
@@ -696,7 +691,7 @@ connection.connect(async error => {
         }
 
         try {
-            const { over, winner } = await isGameOver(gameId, userId);
+            const { over, winner } = await isGameOver(gameId);
 
             if (over) {
                 res.send({
@@ -727,7 +722,6 @@ connection.connect(async error => {
         }
     });
 
-    // works
     app.get('/throw', async (req, res) => {
         const { userId, gameId, actual, shape } = req.query;
         const quantityStr = req.query.quantity;
@@ -783,7 +777,7 @@ connection.connect(async error => {
                 return;
             }
 
-            const { over, winner } = await isGameOver(gameId, userId);
+            const { over, winner } = await isGameOver(gameId);
 
             if (over) {
                 res.send({ result: `Game is over. Winner is user with id=${winner}` });
@@ -811,6 +805,19 @@ connection.connect(async error => {
                     'some of the provided cards ids do not belong to you',
                     'GET /throw?userId=&gameId=&quantity=&shape=&actual='
                 );
+                return;
+            }
+
+            // check before if previous player has won
+            const previousPlayerId = await getPreviousPlayerId(gameId, userId);
+            const previousPlayerCards = await getUserCards(gameId, previousPlayerId);
+
+            if (!previousPlayerCards.length) {
+                await setWinnerAndUpdateScore(gameId, previousPlayerId);
+
+                res.send({
+                    result: `Game is over. Winner is user with id=${previousPlayerId}`,
+                });
                 return;
             }
 
@@ -885,7 +892,6 @@ connection.connect(async error => {
         }
 
         try {
-            // TODO: userId needed and missing
             const { over, winner } = await isGameOver(gameId);
 
             if (over) {
@@ -909,7 +915,7 @@ connection.connect(async error => {
         }
 
         try {
-            const { over, winner } = await isGameOver(gameId, userId);
+            const { over, winner } = await isGameOver(gameId);
 
             if (over) {
                 res.send({
@@ -952,10 +958,10 @@ connection.connect(async error => {
             } = await getLastDeclaration(gameId);
 
             const allCardsSame = actualCards.every(({ name }) => name === shape);
+            const previousPlayerId = await getPreviousPlayerId(gameId, userId);
 
             if (!allCardsSame) {
                 // previous player takes the bluff cards
-                const previousPlayerId = await getPreviousPlayerId(gameId, userId);
                 await handleChallenge(gameId, previousPlayerId, actualCards);
 
                 res.send({
@@ -967,6 +973,19 @@ connection.connect(async error => {
             }
 
             await handleChallenge(gameId, userId, actualCards);
+
+            // check before if previous player has won
+            const previousPlayerCards = await getUserCards(gameId, previousPlayerId);
+
+            if (!previousPlayerCards.length) {
+                await setWinnerAndUpdateScore(gameId, previousPlayerId);
+
+                res.send({
+                    result: `Your bluff was unsuccessfull! Last thrown cards are in your deck. Game is over. Winner is user with id=${previousPlayerId}`,
+                });
+                return;
+            }
+
             res.send({
                 gameId,
                 userId,
