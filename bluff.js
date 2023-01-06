@@ -4,18 +4,11 @@ const mysql = require('mysql');
 const _ = require('lodash');
 const app = express();
 
-//  ssh -L 15000:/home/student/it/2011/it113752/mysql/run/mysql.sock it113752@users.iee.ihu.gr
-
 const CARD_SYMBOLS = ['clubs (♣)', 'diamonds (♦)', 'hearts (♥)', 'spades (♠)'];
 // range [2, 10]
 const CARD_SHAPES = _.range(2, 11, 1).concat(['J', 'Q', 'K', 'A']);
 const PORT = 30000;
 const TOTAL_PLAYERS_IN_GAME = 2;
-const CONFIG = {
-    user: 'root',
-    port: 15000,
-    password: 'Pmic93nena!',
-};
 
 const queryPromise = query => {
     return new Promise((resolve, reject) => {
@@ -30,7 +23,9 @@ const queryPromise = query => {
     });
 };
 
-const connection = mysql.createConnection(CONFIG);
+const connection = mysql.createConnection({
+    user: 'root',
+});
 
 const handleError = (res, error, endpoint) => {
     console.error(error);
