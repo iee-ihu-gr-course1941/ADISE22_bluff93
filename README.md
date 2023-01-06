@@ -38,7 +38,7 @@
     | ---------- | ------ | ------------------- |
     | name       | String | Το όνομα του χρήστη |
 
-    Επιστρέφει JSON με το παρακάτω structure:
+    Επιστρέφει:
     `{ message, userId, name, availableGameIds }`
 
 -   `GET /new-game?userId=`
@@ -52,7 +52,7 @@
     | ---------- | ------ | ---------------- |
     | userId     | String | Το id του χρήστη |
 
-    Επιστρέφει JSON με το παρακάτω structure:
+    Επιστρέφει:
     `{ message, gameId }`
 
 -   `GET /join-game?gameId=&userId=`
@@ -70,7 +70,7 @@
     | gameId     | String | Το id του τραπεζιού/παιχνιδιού |
     | userId     | String | Το id του χρήστη               |
 
-    Επιστρέφει JSON με το παρακάτω structure:
+    Επιστρέφει:
     `{ message, gameId, userId, userOrder }`
 
 -   `GET /my-cards?gameId=&userId=`
@@ -86,7 +86,7 @@
     | gameId     | String | Το id του τραπεζιού/παιχνιδιού |
     | userId     | String | Το id του χρήστη               |
 
-    Επιστρέφει JSON με το παρακάτω structure:
+    Επιστρέφει:
     `{ myCards, gameId, userId, allCards }`
 
 -   `GET /throw?userId=&gameId=&quantity=&shape=&actual=`
@@ -111,7 +111,7 @@
     `GET /throw?userId=1&gameId=1&quantity=3&shape=Κ&actual=1,2,3`
     Ο χρήστης με **userId** 1, στο παιχνίδι με **gameId** 1 δηλώνει ότι θα πετάξει 3 (**quantity**) Κ (**shape**) (παπάδες) και οι πραγματικές κάρτες (**actual**) που πετάει έχουν ids 1, 2 και 3.
 
-    Επιστρέφει JSON με το παρακάτω structure:
+    Επιστρέφει:
     `{ message, myCards, gameId, userId }`
 
 -   `GET /challenge?userId=&gameId=`
@@ -129,7 +129,7 @@
     | gameId     | String | Το id του τραπεζιού/παιχνιδιού |
     | userId     | String | Το id του χρήστη               |
 
-    Επιστρέφει JSON με το παρακάτω structure:
+    Επιστρέφει:
     `{ gameId, userId, result }`
 
 -   `GET /last-declaration?gameId=`
@@ -143,7 +143,7 @@
     | ---------- | ------ | ------------------------------ |
     | gameId     | String | Το id του τραπεζιού/παιχνιδιού |
 
-    Επιστρέφει JSON με το παρακάτω structure:
+    Επιστρέφει:
 
     ```
     {
@@ -165,7 +165,7 @@
     | ---------- | ------ | ------------------------------ |
     | gameId     | String | Το id του τραπεζιού/παιχνιδιού |
 
-    Επιστρέφει JSON με το παρακάτω structure:
+    Επιστρέφει:
 
     ```
     {
@@ -193,5 +193,5 @@
     | ---------- | ------ | ---------------- |
     | userId     | String | Το id του χρήστη |
 
-    Επιστρέφει JSON με το παρακάτω structure:
+    Επιστρέφει:
     `{ scoreboard }`
