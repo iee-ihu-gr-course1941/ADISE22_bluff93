@@ -25,6 +25,8 @@ const queryPromise = query => {
 
 const connection = mysql.createConnection({
     user: 'root',
+    port: 15000,
+    password: 'Pmic93nena!',
 });
 
 const handleError = (res, error, endpoint) => {
@@ -419,26 +421,37 @@ const initializeDB = async () => {
                 REFERENCES bluff.user (id)
                 ON DELETE NO ACTION
                 ON UPDATE NO ACTION);`);
-    // insert symbol values; ignore if they already exist
-    await queryPromise(`
-        INSERT IGNORE INTO bluff.card_symbol (id, name)
-        VALUES ${CARD_SYMBOLS.map((symbol, idx) => `(${idx + 1}, "${symbol}")`).join(',')};
-    `);
-    // insert shape values; ignore if they already exist
-    await queryPromise(`
-        INSERT IGNORE INTO bluff.card_shape (id, name)
-        VALUES ${CARD_SHAPES.map((shape, idx) => `(${idx + 1}, "${shape}")`).join(',')};
-    `);
-    // insert card values based on shape/symbol ids; ignore if they already exist
+    // insert symbol values if empty
+    const symbols = await queryPromise('SELECT * FROM bluff.card_symbol;');
+    if (!symbols.length) {
+        await queryPromise(`
+            INSERT INTO bluff.card_symbol (id, name)
+            VALUES ${CARD_SYMBOLS.map((symbol, idx) => `(${idx + 1}, "${symbol}")`).join(',')};
+        `);
+    }
+
+    // insert shape values if empty
+    const shapes = await queryPromise('SELECT * FROM bluff.card_shape;');
+    if (!shapes.length) {
+        await queryPromise(`
+            INSERT INTO bluff.card_shape (id, name)
+            VALUES ${CARD_SHAPES.map((shape, idx) => `(${idx + 1}, "${shape}")`).join(',')};
+        `);
+    }
+
+    // insert card values based on shape/symbol ids if empty
     // flatten nested arrays to 1d array
-    await queryPromise(`
-        INSERT IGNORE INTO bluff.card (symbol_id, shape_id)
-        VALUES ${_.flatten(
-            CARD_SYMBOLS.map((_, symbolId) =>
-                CARD_SHAPES.map((_, shapeId) => `(${symbolId + 1}, ${shapeId + 1})`).join(',')
-            )
-        )};
-    `);
+    const cards = await queryPromise('SELECT * FROM bluff.card;');
+    if (!cards.length) {
+        await queryPromise(`
+            INSERT INTO bluff.card (symbol_id, shape_id)
+            VALUES ${_.flatten(
+                CARD_SYMBOLS.map((_, symbolId) =>
+                    CARD_SHAPES.map((_, shapeId) => `(${symbolId + 1}, ${shapeId + 1})`).join(',')
+                )
+            )};
+        `);
+    }
 };
 
 connection.connect(async error => {
