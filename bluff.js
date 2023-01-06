@@ -25,8 +25,6 @@ const queryPromise = query => {
 
 const connection = mysql.createConnection({
     user: 'root',
-    port: 15000,
-    password: 'Pmic93nena!',
 });
 
 const handleError = (res, error, endpoint) => {
