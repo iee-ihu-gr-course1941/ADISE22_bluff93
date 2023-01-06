@@ -177,6 +177,12 @@
            createdBy,
            players
        }
+       // τα παρακάτω keys επιστρέφονται στην περίπτωση που δεν υπάρχει νικητής στο παιχνίδι
+       nextPlayer,
+       lastDeclaration: {
+            quantity,
+            shape
+       }
     }
     ```
 
